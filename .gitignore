@@ -1,0 +1,20 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment secrets
+.env
+
+# macOS
+.DS_Store
+
+# Models cache
+.cache/
+
+# Build plan contains live credentials — never commit
+GUARDRAIL_BUILD_PLAN.md
