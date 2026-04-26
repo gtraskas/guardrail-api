@@ -4,18 +4,18 @@ A professional hallucination detection API for AI responses.
 
 ## Architecture (Cascading Audit Pipeline)
 
-1. **Extractor (SpaCy)** — Named entity mismatch detection (local, ~0ms)
-2. **Scorer (Cross-Encoder)** — Semantic faithfulness score (local, ~50ms)
-3. **Judge (Groq Llama 3 70B)** — Natural language explanation (API, ~1s)
+1. **Extractor (SpaCy)** — Named entity mismatch detection (local, ~10ms)
+2. **Scorer (Cross-Encoder via ONNX)** — Semantic faithfulness score (local, ~10ms)
+3. **Judge (Groq Llama 3.3 70B)** — Natural language explanation (API, ~1s)
 4. **Memory (Supabase)** — Audit log persistence + leaderboard
 
 ## Stack
 
 - **Backend:** FastAPI + Python 3.13
-- **NLP:** SpaCy (NER) + sentence-transformers (cross-encoder)
-- **LLM:** Groq Llama-3-70b (zero cost, sub-second)
+- **NLP:** SpaCy (NER) + fastembed (ONNX cross-encoder, no PyTorch)
+- **LLM:** Groq Llama-3.3-70b-versatile (zero cost, sub-second)
 - **Database:** Supabase (Postgres)
-- **Hosting:** Render
+- **Hosting:** Render (free tier — 512 MB RAM)
 
 ## Endpoints
 

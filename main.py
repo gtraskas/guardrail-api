@@ -11,7 +11,7 @@ from collections import defaultdict
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sentence_transformers import CrossEncoder
+from fastembed.rerank.cross_encoder import TextCrossEncoder
 import spacy
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -43,8 +43,10 @@ app.add_middleware(
 
 # --- Startup: load heavy models once -----------------------------------------
 
-logger.info("Loading Cross-Encoder model...")
-cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+logger.info("Loading Cross-Encoder (ONNX) model...")
+# fastembed runs the same ms-marco MiniLM cross-encoder via ONNX runtime,
+# avoiding the ~2GB torch+CUDA dependency tree that broke Render free-tier deploys.
+cross_encoder = TextCrossEncoder(model_name="Xenova/ms-marco-MiniLM-L-6-v2")
 logger.info("Cross-Encoder loaded.")
 
 logger.info("Loading SpaCy NER model...")
@@ -113,10 +115,10 @@ def audit(req: AuditRequest):
     # Hard-fail shortcut: 2+ fabricated entities is a strong hallucination signal
     hard_fail = len(entity_mismatches) >= 2
 
-    # Stage 2: Cross-Encoder score
+    # Stage 2: Cross-Encoder score (ONNX via fastembed)
     # ms-marco cross-encoder raw range is roughly [-10, +10]; we use the raw score
     # for thresholds (well-separated for relevance) and a normalized 0-1 score for UI.
-    raw_score = float(cross_encoder.predict([[req.source_text, req.ai_response]])[0])
+    raw_score = float(next(cross_encoder.rerank(req.source_text, [req.ai_response])))
     score = max(0.0, min(1.0, (raw_score + 10) / 20))
     logger.info("Stage 2 complete. raw=%.4f normalized=%.4f", raw_score, score)
 

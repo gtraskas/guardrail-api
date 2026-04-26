@@ -78,7 +78,7 @@ All four projects are architected to use Groq’s Llama 3 models for every LLM t
 
 ### Project 1: Copilot Logic Prompt
 
-> Create a FastAPI main.py for an AI Hallucination Audit tool. Use the sentence-transformers library with the cross-encoder/ms-marco-MiniLM-L-6-v2 model to score the similarity between a 'source_text' and an 'ai_response'. If the score is < 0.5, flag it as a 'hallucination'. Include a POST /audit endpoint that saves the result to a Supabase table called audit_logs and a GET /leaderboard endpoint that aggregates scores by model_name. Use Groq's Llama-3-70b as a secondary 'Judge' to explain WHY it might be a hallucination.
+> Create a FastAPI main.py for an AI Hallucination Audit tool. Use the fastembed library (`TextCrossEncoder` with `Xenova/ms-marco-MiniLM-L-6-v2`) to score the similarity between a 'source_text' and an 'ai_response'. If the score is < 0.5, flag it as a 'hallucination'. Include a POST /audit endpoint that saves the result to a Supabase table called audit_logs and a GET /leaderboard endpoint that aggregates scores by model_name. Use Groq's Llama-3.3-70b-versatile as a secondary 'Judge' to explain WHY it might be a hallucination.
 
 ### Project 1: Lovable UI Prompt
 
@@ -186,7 +186,7 @@ print(f"Seeded {len(records)} benchmark rows")
 ### Step 4 — Project 1: FastAPI Backend
 
 ```bash
-pip install sentence-transformers langchain-groq groq fastapi uvicorn python-dotenv supabase spacy
+pip install fastembed langchain-groq groq fastapi uvicorn python-dotenv supabase spacy
 python -m spacy download en_core_web_sm
 ```
 
@@ -197,7 +197,7 @@ import time, os, json
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sentence_transformers import CrossEncoder
+from fastembed.rerank.cross_encoder import TextCrossEncoder
 import spacy
 from supabase import create_client
 from dotenv import load_dotenv
@@ -211,7 +211,7 @@ nlp = spacy.load("en_core_web_sm")
 supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
 
 # Load once at startup — Render caches this between requests
-cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+cross_encoder = TextCrossEncoder(model_name="Xenova/ms-marco-MiniLM-L-6-v2")
 nlp = spacy.load("en_core_web_sm")
 supabase = create_client(os.environ["SUPABASE_URL"], os.environ["SUPABASE_SERVICE_KEY"])
 
@@ -231,7 +231,7 @@ def audit(req: AuditRequest):
     start = time.time()
 
     # Cross-encoder score: 0.0 (unrelated) to 1.0 (fully supported)
-    score = float(cross_encoder.predict([[req.source_text, req.ai_response]]))
+    score = float(next(cross_encoder.rerank(req.source_text, [req.ai_response])))
 
     if score < 0.5:
         flag = "hallucination"
@@ -293,7 +293,7 @@ def leaderboard():
 ```txt
 fastapi
 uvicorn
-sentence-transformers
+fastembed
 langchain-groq
 groq
 spacy
