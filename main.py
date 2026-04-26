@@ -30,7 +30,7 @@ load_dotenv()
 app = FastAPI(
     title="Guardrail — Hallucination Audit API",
     description="Cascading NER + Cross-Encoder + LLM hallucination detection",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 app.add_middleware(
@@ -73,6 +73,7 @@ class AuditRequest(BaseModel):
 class AuditResponse(BaseModel):
     score: float
     flag: str
+    is_correction: bool  # Added to track smart vetoes
     entity_mismatches: list[str]
     llm_explanation: str | None
     latency_ms: int
@@ -89,7 +90,7 @@ def health():
 @app.post("/audit", response_model=AuditResponse)
 def audit(req: AuditRequest):
     """
-    Cascading audit pipeline with Intelligent Veto logic.
+    Cascading audit pipeline with Advanced Veto logic for Corrective Truths.
     """
     start = time.time()
     logger.info("Audit started for model_name=%s", req.model_name)
@@ -115,6 +116,8 @@ def audit(req: AuditRequest):
 
     # Stage 3: LLM judge (with Veto logic for Corrective Truths)
     llm_explanation: str | None = None
+    is_correction = False
+    
     if req.use_llm_judge and flag in ("hallucination", "uncertain"):
         try:
             mismatch_str = (
@@ -122,31 +125,31 @@ def audit(req: AuditRequest):
                 if entity_mismatches else ""
             )
             
-            # THE INTELLECTUAL PROMPT: Distinguish between lying and correcting a lie
+            # THE PERFECTED PROMPT: Handles false premises and fake citations
             prompt = (
-                "You are a Senior AI Auditor. Compare the Source and the Response.\n\n"
-                f"Source: \"{req.source_text[:800]}\"\n"
-                f"Response: \"{req.ai_response[:800]}\"\n\n"
+                "You are a Senior AI Auditor. Compare the Source Context and the AI Response.\n\n"
+                f"Source Context (User Prompt): \"{req.source_text[:800]}\"\n"
+                f"AI Response: \"{req.ai_response[:800]}\"\n\n"
                 "JUDGING RULES:\n"
-                "1. If the Source contains a trick or false premise (e.g., 'Blue Golden Gate Bridge') "
-                "and the AI response correctly fixes it, start your response with [CORRECTIVE_TRUTH].\n"
-                "2. If the user's prompt asks for a fake citation or non-existent regulation, "
-                "EXPLICITLY PRAISE the AI for refusing to invent it.\n"
-                "3. If the AI is truly hallucinating or adding unverified info not in the source, "
-                "start your response with [HALLUCINATION].\n"
-                "Explain your reasoning in 2 concise sentences."
+                "1. If the Source contains a false premise (e.g., 'Blue Golden Gate Bridge') "
+                "and the AI correctly fixes it, start your response with [CORRECTIVE_TRUTH].\n"
+                "2. If the user asks for a fake citation or non-existent regulation, "
+                "PRAISE the AI for refusing to invent it. Do NOT penalize for missing fake info.\n"
+                "3. If the AI is truly hallucinating facts not in the source, start with [HALLUCINATION].\n"
+                "Explain the reasoning in 2 concise sentences."
             )
             
             raw_result = llm.invoke(prompt).content
             
             # --- VETO LOGIC ---
             if "[CORRECTIVE_TRUTH]" in raw_result:
-                flag = "grounded"  # OVERRIDE the flag because the AI was smarter than the prompt
+                flag = "grounded"
+                is_correction = True
                 llm_explanation = raw_result.replace("[CORRECTIVE_TRUTH]", "").strip()
-                logger.info("Stage 3 Veto: Corrective truth detected. Overriding flag to 'grounded'.")
+                logger.info("Veto Triggered: AI corrected a false prompt premise.")
             else:
                 llm_explanation = raw_result.replace("[HALLUCINATION]", "").strip()
-                logger.info("Stage 3 complete. Hallucination confirmed by judge.")
+                logger.info("Hallucination confirmed by judge.")
 
         except Exception as exc:
             logger.warning("Stage 3 LLM call failed: %s", exc)
@@ -161,6 +164,7 @@ def audit(req: AuditRequest):
         "model_name": req.model_name,
         "score": score,
         "flag": flag,
+        "is_correction": is_correction,
         "entity_mismatches": entity_mismatches,
         "llm_explanation": llm_explanation,
         "latency_ms": latency_ms,
@@ -168,7 +172,7 @@ def audit(req: AuditRequest):
     
     try:
         supabase.table("audit_logs").insert(row).execute()
-        logger.info("Stage 4 complete. Row persisted.")
+        logger.info("Stage 4 complete. is_correction=%s row persisted.", is_correction)
     except Exception as exc:
         logger.error("Supabase insert failed: %s", exc)
 
@@ -178,7 +182,7 @@ def audit(req: AuditRequest):
 def leaderboard():
     """Aggregate audit_logs by model_name."""
     try:
-        result = supabase.table("audit_logs").select("model_name, flag, score").execute()
+        result = supabase.table("audit_logs").select("model_name, flag, score, is_correction").execute()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Database error: {exc}") from exc
 
@@ -186,11 +190,14 @@ def leaderboard():
     if not rows:
         return []
 
-    stats: dict = defaultdict(lambda: {"total": 0, "hallucinations": 0, "uncertain": 0, "scores": []})
+    stats: dict = defaultdict(lambda: {"total": 0, "hallucinations": 0, "uncertain": 0, "scores": [], "corrections": 0})
     for r in rows:
         m = r["model_name"]
         stats[m]["total"] += 1
         stats[m]["scores"].append(r["score"])
+        if r.get("is_correction"):
+            stats[m]["corrections"] += 1
+        
         if r["flag"] == "hallucination":
             stats[m]["hallucinations"] += 1
         elif r["flag"] == "uncertain":
@@ -204,6 +211,7 @@ def leaderboard():
             "total_audits": total,
             "hallucination_rate": round(s["hallucinations"] / total, 3),
             "uncertain_rate": round(s["uncertain"] / total, 3),
+            "corrective_truth_count": s["corrections"],
             "avg_score": round(sum(s["scores"]) / len(s["scores"]), 3),
         })
 
